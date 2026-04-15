@@ -1,0 +1,161 @@
+name: CI – build & publish
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write          # Cosign keyless (Sigstore OIDC)
+  security-events: write   # Trivy SARIF upload to GitHub Security tab
+
+jobs:
+  # ── Helm lint ────────────────────────────────────────────────
+  helm-lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint and template-render chart
+        run: |
+          for chart in charts/*/; do
+            name=$(basename "$chart")
+            echo "::group::${name}"
+            helm lint "$chart"
+            helm template test "$chart"
+            echo "::endgroup::"
+          done
+
+  # ── Container image ──────────────────────────────────────────
+  image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        if: github.event_name != 'pull_request'
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs
+          tags: |
+            type=sha,prefix=
+            type=raw,value=main-{{date 'YYYYMMDDHHmmss'}}-{{sha}},enable={{is_default_branch}}
+            type=ref,event=branch
+            type=match,pattern=v(.*),group=1
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - uses: docker/build-push-action@v6
+        id: build
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          sbom: ${{ github.event_name != 'pull_request' }}
+          provenance: ${{ github.event_name != 'pull_request' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # ── Sign with Cosign (keyless / Sigstore) ──────────────
+      - uses: sigstore/cosign-installer@v3
+        if: github.event_name != 'pull_request'
+
+      - name: Sign image
+        if: github.event_name != 'pull_request'
+        run: |
+          cosign sign --yes \
+            ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs@${{ steps.build.outputs.digest }}
+
+      # ── Trivy vulnerability scan → GitHub Security tab ─────
+      - name: Scan image for vulnerabilities
+        if: github.event_name != 'pull_request'
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy.sarif
+          severity: CRITICAL,HIGH
+
+      - name: Upload scan results to GitHub Security
+        if: github.event_name != 'pull_request'
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy.sarif
+          category: trivy-tech-ops-docs
+
+  # ── Helm chart → OCI registry ───────────────────────────────
+  helm-publish:
+    runs-on: ubuntu-latest
+    needs: [helm-lint, image]
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - uses: sigstore/cosign-installer@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Log in to GHCR (Helm OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login ${{ env.REGISTRY }} \
+              -u ${{ github.actor }} --password-stdin
+
+      - name: Package, push & sign charts
+        run: |
+          OCI_BASE="oci://${{ env.REGISTRY }}/${{ github.repository }}/charts"
+          TAG="${GITHUB_REF#refs/tags/}"
+          SHA=$(git rev-parse --short HEAD)
+          IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
+          TIMESTAMP=$(date +%s)
+
+          for dir in charts/*/; do
+            chart=$(basename "$dir")
+            echo "::group::${chart}"
+
+            BASE_VERSION=$(grep '^version:' "${dir}Chart.yaml" | awk '{print $2}')
+
+            if [ "$IS_TAG" = "true" ]; then
+              VERSION="${BASE_VERSION}"
+            else
+              VERSION="${BASE_VERSION}-dev.${TIMESTAMP}"
+              sed -i "s/^\(\s*tag:\).*/\1 ${SHA}/" "${dir}values.yaml"
+            fi
+
+            sed -i "s/^version:.*/version: ${VERSION}/" "${dir}Chart.yaml"
+            sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "${dir}Chart.yaml"
+
+            helm package "$dir" -d /tmp/charts
+
+            PUSH_OUT=$(helm push /tmp/charts/${chart}-*.tgz "${OCI_BASE}" 2>&1)
+            echo "$PUSH_OUT"
+
+            DIGEST=$(echo "$PUSH_OUT" | awk '/^Digest:/{print $2}')
+            cosign sign --yes \
+              "${{ env.REGISTRY }}/${{ github.repository }}/charts/${chart}@${DIGEST}"
+
+            echo "::endgroup::"
+          done
