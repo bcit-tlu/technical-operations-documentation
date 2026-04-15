@@ -6,13 +6,13 @@ WORKDIR /app
 
 RUN set -ex \
     && python3 -m venv .venv \
-    && source .venv/bin/activate \
+    && . .venv/bin/activate \
     && pip install zensical
 
 COPY . /app
 
 RUN set -ex \
-    && cd /app \
+    && . /app/.venv/bin/activate \
     && zensical build
 
 ## Release
