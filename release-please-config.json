@@ -8,8 +8,16 @@
       "release-type": "simple",
       "component": "tech-ops-docs",
       "extra-files": [
-        "charts/tech-ops-docs/Chart.yaml",
-        "charts/tech-ops-docs/values.yaml"
+        {
+          "type": "yaml",
+          "path": "charts/tech-ops-docs/Chart.yaml",
+          "jsonpath": "$.version"
+        },
+        {
+          "type": "yaml",
+          "path": "charts/tech-ops-docs/Chart.yaml",
+          "jsonpath": "$.appVersion"
+        }
       ]
     }
   }

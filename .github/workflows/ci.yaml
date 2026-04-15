@@ -142,7 +142,7 @@ jobs:
               VERSION="${BASE_VERSION}"
             else
               VERSION="${BASE_VERSION}-dev.${TIMESTAMP}"
-              sed -i "s/^\(\s*tag:\).*/\1 ${SHA}/" "${dir}values.yaml"
+              sed -i "s/^\(\s*tag:\).*/\1 \"${SHA}\"/" "${dir}values.yaml"
             fi
 
             sed -i "s/^version:.*/version: ${VERSION}/" "${dir}Chart.yaml"
