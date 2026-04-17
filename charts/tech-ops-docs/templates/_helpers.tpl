@@ -36,5 +36,4 @@ Selector labels
 */}}
 {{- define "tech-ops-docs.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "tech-ops-docs.name" . }}
-app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
