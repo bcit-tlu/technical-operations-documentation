@@ -68,7 +68,7 @@ jobs:
           else
             BASE_VERSION=$(grep '^version:' charts/tech-ops-docs/Chart.yaml | awk '{print $2}')
             TIMESTAMP=$(git log -1 --format=%ct)
-            echo "value=${BASE_VERSION}-dev.${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+            echo "value=${BASE_VERSION}-rc.${TIMESTAMP}" >> "$GITHUB_OUTPUT"
           fi
 
       - uses: docker/metadata-action@v5
@@ -161,9 +161,9 @@ jobs:
             if [ "$IS_TAG" = "true" ]; then
               VERSION="${BASE_VERSION}"
             else
-              VERSION="${BASE_VERSION}-dev.${TIMESTAMP}"
+              VERSION="${BASE_VERSION}-rc.${TIMESTAMP}"
               # image.tag defaults to appVersion via the template;
-              # no sed override needed — Flux deploys the dev version.
+              # no sed override needed — Flux deploys the rc version.
             fi
 
             sed -i "s/^version:.*/version: ${VERSION}/" "${dir}Chart.yaml"
