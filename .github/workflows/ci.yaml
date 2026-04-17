@@ -59,6 +59,18 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Determine app version
+        id: app-version
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" =~ ^v(.+)$ ]]; then
+            echo "value=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
+          else
+            BASE_VERSION=$(grep '^version:' charts/tech-ops-docs/Chart.yaml | awk '{print $2}')
+            TIMESTAMP=$(git log -1 --format=%ct)
+            echo "value=${BASE_VERSION}-dev.${TIMESTAMP}" >> "$GITHUB_OUTPUT"
+          fi
+
       - uses: docker/metadata-action@v5
         id: meta
         with:
@@ -68,6 +80,7 @@ jobs:
             type=raw,value=main-{{date 'YYYYMMDDHHmmss'}}-{{sha}},enable={{is_default_branch}}
             type=ref,event=branch
             type=match,pattern=v(.*),group=1
+            type=raw,value=${{ steps.app-version.outputs.value }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - uses: docker/build-push-action@v6
@@ -139,7 +152,7 @@ jobs:
           TAG="${GITHUB_REF#refs/tags/}"
           SHA=$(git rev-parse --short HEAD)
           IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
-          TIMESTAMP=$(date +%s)
+          TIMESTAMP=$(git log -1 --format=%ct)
 
           for dir in charts/*/; do
             chart=$(basename "$dir")
@@ -151,7 +164,8 @@ jobs:
               VERSION="${BASE_VERSION}"
             else
               VERSION="${BASE_VERSION}-dev.${TIMESTAMP}"
-              sed -i "s/^\(\s*tag:\).*/\1 \"${SHA}\"/" "${dir}values.yaml"
+              # image.tag defaults to appVersion via the template;
+              # no sed override needed — Flux deploys the dev version.
             fi
 
             sed -i "s/^version:.*/version: ${VERSION}/" "${dir}Chart.yaml"
