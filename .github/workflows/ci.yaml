@@ -1,5 +1,12 @@
 name: CI – build & publish
 
+run-name: >-
+  ${{ github.event_name == 'pull_request'
+      && format('PR #{0} — {1}', github.event.pull_request.number, github.event.pull_request.title)
+      || startsWith(github.ref, 'refs/tags/')
+      && format('Release {0}', github.ref_name)
+      || format('Head build — {0}', github.event.head_commit.message) }}
+
 on:
   push:
     branches: [main]
@@ -44,9 +51,82 @@ jobs:
             echo "::endgroup::"
           done
 
+  # ── Compute publish plan (Vault/Rancher-style) ───────────────
+  #
+  # Tag model (strict-D — matches hashicorp/vault & rancher/rancher):
+  #   v<X.Y.Z>-rcN  → "pre-release" git tag (release-please in prerelease
+  #                   mode). Published as the immutable OCI tag X.Y.Z-rcN
+  #                   only; NO moving pointer follows rcs. Consumers opt
+  #                   into an rc by pinning its version tag.
+  #   v<X.Y.Z>      → "full release" git tag (graduated from an rc via
+  #                   `Release-As:` footer). Published as the immutable
+  #                   X.Y.Z plus, iff this is the highest full-release
+  #                   SemVer, the moving `stable` and `latest` OCI
+  #                   pointers.
+  #
+  # Non-tag pushes to main publish only the moving `head` OCI pointer — the
+  # continuous-integration artifact (mirrors rancher/rancher:head). No
+  # SemVer is stamped; no helm chart is published; nothing is "released".
+  versions:
+    runs-on: ubuntu-latest
+    outputs:
+      mode: ${{ steps.compute.outputs.mode }}
+      version: ${{ steps.compute.outputs.version }}
+      is_prerelease: ${{ steps.compute.outputs.is_prerelease }}
+      is_highest_stable: ${{ steps.compute.outputs.is_highest_stable }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0    # need full history + tags for highest-stable check
+
+      - name: Compute publish plan
+        id: compute
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT_SHA="${GITHUB_SHA::7}"
+          TAG_REF="${GITHUB_REF#refs/tags/}"
+          MODE="skip"
+          VERSION=""
+          IS_PRERELEASE=false
+          IS_HIGHEST_STABLE=false
+
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            MODE="release"
+            VERSION="${TAG_REF#v}"
+            if [[ "${VERSION}" == *-* ]]; then
+              IS_PRERELEASE=true
+            else
+              ALL_STABLE=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" \
+                | grep -v -- '-' \
+                | sed "s/^v//" \
+                || true)
+              HIGHEST_STABLE=$(printf '%s\n' "${ALL_STABLE}" | sort -V | tail -n1)
+              if [[ "${VERSION}" == "${HIGHEST_STABLE}" ]]; then
+                IS_HIGHEST_STABLE=true
+              fi
+            fi
+          elif [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
+            # Use a SemVer-valid prerelease string so the same value can
+            # be stamped into Chart.yaml (helm package requires SemVer)
+            # and piped through the image pipeline.
+            MODE="head"
+            VERSION="0.0.0-head.${SHORT_SHA}"
+          else
+            MODE="pr"
+            VERSION="0.0.0-pr.${SHORT_SHA}"
+          fi
+
+          echo "mode=${MODE}"                         >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}"                   >> "$GITHUB_OUTPUT"
+          echo "is_prerelease=${IS_PRERELEASE}"       >> "$GITHUB_OUTPUT"
+          echo "is_highest_stable=${IS_HIGHEST_STABLE}" >> "$GITHUB_OUTPUT"
+          echo "  mode=${MODE} version=${VERSION} prerelease=${IS_PRERELEASE} highest_stable=${IS_HIGHEST_STABLE}"
+
   # ── Container image ──────────────────────────────────────────
   image:
     runs-on: ubuntu-latest
+    needs: [versions]
     steps:
       - uses: actions/checkout@v4
 
@@ -59,29 +139,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Determine app version
-        id: app-version
-        run: |
-          TAG="${GITHUB_REF#refs/tags/}"
-          if [[ "$TAG" =~ ^v(.+)$ ]]; then
-            echo "value=${BASH_REMATCH[1]}" >> "$GITHUB_OUTPUT"
-          else
-            BASE_VERSION=$(grep '^version:' charts/tech-ops-docs/Chart.yaml | awk '{print $2}')
-            TIMESTAMP=$(git log -1 --format=%ct)
-            echo "value=${BASE_VERSION}-rc.${TIMESTAMP}" >> "$GITHUB_OUTPUT"
-          fi
-
+      # Publish tags by mode (matches hashicorp/vault, rancher/rancher):
+      #   mode=release (tag push):
+      #     always → <version>
+      #     if full release + highest stable semver → stable, latest
+      #   mode=head  (main branch push):
+      #     always → head
+      #   mode=pr    (pull request):
+      #     always → pr-<sha>  (not pushed to registry)
       - uses: docker/metadata-action@v5
         id: meta
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs
           tags: |
-            type=sha,prefix=
-            type=raw,value=main-{{date 'YYYYMMDDHHmmss'}}-{{sha}},enable={{is_default_branch}}
-            type=ref,event=branch
-            type=match,pattern=v(.*),group=1
-            type=raw,value=${{ steps.app-version.outputs.value }}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ needs.versions.outputs.version }},enable=${{ needs.versions.outputs.mode == 'release' || needs.versions.outputs.mode == 'pr' }}
+            type=raw,value=head,enable=${{ needs.versions.outputs.mode == 'head' }}
+            type=raw,value=stable,enable=${{ needs.versions.outputs.mode == 'release' && needs.versions.outputs.is_prerelease == 'false' && needs.versions.outputs.is_highest_stable == 'true' }}
+            type=raw,value=latest,enable=${{ needs.versions.outputs.mode == 'release' && needs.versions.outputs.is_prerelease == 'false' && needs.versions.outputs.is_highest_stable == 'true' }}
+          flavor: |
+            latest=false
 
       - uses: docker/build-push-action@v6
         id: build
@@ -123,9 +199,18 @@ jobs:
           category: trivy-tech-ops-docs
 
   # ── Helm chart → OCI registry ───────────────────────────────
+  #
+  # Charts are published on:
+  #   * tag push (mode=release) — versioned artifact + conditional
+  #     stable/latest moving tags (when highest full-release SemVer).
+  #   * main push (mode=head)   — 0.0.0-head.<sha> versioned artifact +
+  #     the moving `head` OCI tag. Lets flux-fleet's latest overlay
+  #     track main HEAD continuously.
+  #
+  # PR builds do not publish.
   helm-publish:
     runs-on: ubuntu-latest
-    needs: [helm-lint, image]
+    needs: [helm-lint, image, versions]
     if: github.event_name != 'pull_request'
     steps:
       - uses: actions/checkout@v4
@@ -133,6 +218,8 @@ jobs:
       - uses: azure/setup-helm@v4
 
       - uses: sigstore/cosign-installer@v3
+
+      - uses: imjasonh/setup-crane@v0.5
 
       - uses: docker/login-action@v3
         with:
@@ -146,37 +233,46 @@ jobs:
             helm registry login ${{ env.REGISTRY }} \
               -u ${{ github.actor }} --password-stdin
 
-      - name: Package, push & sign charts
+      - name: Package, push, tag & sign charts
+        shell: bash
+        env:
+          MODE: ${{ needs.versions.outputs.mode }}
+          VERSION: ${{ needs.versions.outputs.version }}
+          IS_PRERELEASE: ${{ needs.versions.outputs.is_prerelease }}
+          IS_HIGHEST_STABLE: ${{ needs.versions.outputs.is_highest_stable }}
         run: |
+          set -euo pipefail
           OCI_BASE="oci://${{ env.REGISTRY }}/${{ github.repository }}/charts"
-          IS_TAG=${{ startsWith(github.ref, 'refs/tags/') }}
-          TIMESTAMP=$(git log -1 --format=%ct)
+          IMAGE_BASE="${{ env.REGISTRY }}/${{ github.repository }}/charts"
 
           for dir in charts/*/; do
             chart=$(basename "$dir")
             echo "::group::${chart}"
 
-            BASE_VERSION=$(grep '^version:' "${dir}Chart.yaml" | awk '{print $2}')
-
-            if [ "$IS_TAG" = "true" ]; then
-              VERSION="${BASE_VERSION}"
-            else
-              VERSION="${BASE_VERSION}-rc.${TIMESTAMP}"
-              # image.tag defaults to appVersion via the template;
-              # no sed override needed — Flux deploys the rc version.
-            fi
-
             sed -i "s/^version:.*/version: ${VERSION}/" "${dir}Chart.yaml"
             sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\"/" "${dir}Chart.yaml"
 
             helm package "$dir" -d /tmp/charts
+            PUSH_OUT=$(helm push "/tmp/charts/${chart}-${VERSION}.tgz" "${OCI_BASE}" 2>&1)
+            echo "${PUSH_OUT}"
 
-            PUSH_OUT=$(helm push /tmp/charts/${chart}-*.tgz "${OCI_BASE}" 2>&1)
-            echo "$PUSH_OUT"
+            DIGEST=$(printf '%s\n' "${PUSH_OUT}" | awk '/^Digest:/{print $2}')
+            [[ -n "${DIGEST}" ]] || { echo "Failed to capture digest from helm push" >&2; exit 1; }
 
-            DIGEST=$(echo "$PUSH_OUT" | awk '/^Digest:/{print $2}')
-            cosign sign --yes \
-              "${{ env.REGISTRY }}/${{ github.repository }}/charts/${chart}@${DIGEST}"
+            # Moving-tag rules (strict-D — matches hashicorp/vault &
+            # rancher/rancher):
+            #   mode=head            → add `head`
+            #   mode=release rc      → no moving tag (immutable only)
+            #   mode=release stable  → add `stable` + `latest` iff highest
+            #                          full-release SemVer
+            if [[ "${MODE}" == "head" ]]; then
+              crane tag "${IMAGE_BASE}/${chart}:${VERSION}" head
+            elif [[ "${MODE}" == "release" && "${IS_PRERELEASE}" != "true" && "${IS_HIGHEST_STABLE}" == "true" ]]; then
+              crane tag "${IMAGE_BASE}/${chart}:${VERSION}" stable
+              crane tag "${IMAGE_BASE}/${chart}:${VERSION}" latest
+            fi
+
+            cosign sign --yes "${IMAGE_BASE}/${chart}@${DIGEST}"
 
             echo "::endgroup::"
           done
