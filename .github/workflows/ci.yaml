@@ -152,7 +152,7 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs
           tags: |
-            type=raw,value=${{ needs.versions.outputs.version }},enable=${{ needs.versions.outputs.mode == 'release' || needs.versions.outputs.mode == 'pr' }}
+            type=raw,value=${{ needs.versions.outputs.version }},enable=${{ needs.versions.outputs.mode != 'skip' }}
             type=raw,value=head,enable=${{ needs.versions.outputs.mode == 'head' }}
             type=raw,value=stable,enable=${{ needs.versions.outputs.mode == 'release' && needs.versions.outputs.is_prerelease == 'false' && needs.versions.outputs.is_highest_stable == 'true' }}
             type=raw,value=latest,enable=${{ needs.versions.outputs.mode == 'release' && needs.versions.outputs.is_prerelease == 'false' && needs.versions.outputs.is_highest_stable == 'true' }}
