@@ -14,11 +14,6 @@
         {
           "type": "yaml",
           "path": "charts/tech-ops-docs/Chart.yaml",
-          "jsonpath": "$.version"
-        },
-        {
-          "type": "yaml",
-          "path": "charts/tech-ops-docs/Chart.yaml",
           "jsonpath": "$.appVersion"
         }
       ]
