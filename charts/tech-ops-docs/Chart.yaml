@@ -2,5 +2,11 @@ apiVersion: v2
 name: tech-ops-docs
 description: Technical Operations Documentation — static site served by nginx
 type: application
-version: 0.2.0
-appVersion: 0.2.0
+# Chart version and app version are kept in lockstep with the
+# release-please lineage — both lines carry the `x-release-please-version`
+# marker so every release bumps them together, and CI stamps the same
+# string into both fields at publish time. This keeps the GitHub release,
+# git tag, image tag, and chart OCI tag identical so operators can trace
+# any deployed pod back to a single version string.
+version: 0.2.0 # x-release-please-version
+appVersion: "0.2.0" # x-release-please-version

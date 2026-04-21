@@ -7,12 +7,67 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  # `actions: write` is required for the dispatch-publish job below to
+  # call `gh workflow run` on ci.yaml. GitHub explicitly forbids workflow
+  # runs created by tag pushes that are themselves made by GITHUB_TOKEN
+  # — so the `on: push: tags:` trigger in ci.yaml never fires for
+  # release-please tags. `workflow_dispatch`, however, IS allowed from
+  # GITHUB_TOKEN, so we re-dispatch ci.yaml explicitly against each
+  # just-created tag ref.
+  actions: write
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.rp.outputs.releases_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
       - uses: googleapis/release-please-action@v4
+        id: rp
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+  # ── Re-dispatch ci.yaml for the freshly-created tag ───────────
+  #
+  # release-please runs under the default GITHUB_TOKEN, so the tag it
+  # creates (e.g. v0.2.1-rc) does NOT auto-trigger ci.yaml's
+  # `on: push: tags:` listener — GitHub suppresses workflow chaining
+  # from GITHUB_TOKEN-created refs to prevent infinite recursion.
+  # Without this job, rc / stable tags never produce OCI image or
+  # chart artifacts; only the moving `head` pushed on main-branch
+  # commits ever reaches GHCR.
+  #
+  # `gh workflow run --ref <tag>` IS allowed from GITHUB_TOKEN because
+  # workflow_dispatch has an explicit audit trail and isn't prone to
+  # the same recursion class. The dispatched run sees
+  # github.ref=refs/tags/<tag> and github.event_name=workflow_dispatch,
+  # which ci.yaml's `versions` job handles identically to a `push` tag
+  # event (the tag-ref check runs before the event-name branches).
+  dispatch-publish:
+    needs: release-please
+    if: needs.release-please.outputs.releases_created == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Ensure ci.yaml has a workflow_dispatch trigger
+        run: |
+          if ! grep -q 'workflow_dispatch' .github/workflows/ci.yaml; then
+            echo "::error::.github/workflows/ci.yaml must declare 'workflow_dispatch' for this job to dispatch it" >&2
+            exit 1
+          fi
+
+      - name: Dispatch ci.yaml on the just-created tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${TAG}" ]]; then
+            echo "::warning::release-please reported a release but no tag_name output; skipping dispatch"
+            exit 0
+          fi
+          echo "Dispatching ci.yaml on tag ref: ${TAG}"
+          gh workflow run ci.yaml --ref "${TAG}"
