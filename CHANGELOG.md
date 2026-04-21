@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/bcit-tlu/technical-operations-documentation/compare/v0.2.0...v0.3.0) (2026-04-21)
+
+
+### Features
+
+* **ci:** unify image, chart, and release versions under release-please lineage ([#8](https://github.com/bcit-tlu/technical-operations-documentation/issues/8)) ([28e2ad8](https://github.com/bcit-tlu/technical-operations-documentation/commit/28e2ad8d343eeb0e9ff9a868d7e4d57152bb41db))
+
 ## [0.2.0](https://github.com/bcit-tlu/technical-operations-documentation/compare/v0.1.0...v0.2.0) (2026-04-16)
 
 
