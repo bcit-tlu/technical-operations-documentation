@@ -165,8 +165,14 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # Publish gate: only `head` (main push) and `release` (tag push /
+      # release-please tag re-dispatch) modes may push/sign/scan. PR
+      # builds (mode=pr) and any manual workflow_dispatch on a non-tag
+      # ref (also mode=pr) must stay local — no synthetic `0.0.0-pr.*`
+      # artifacts in the registry. Steps below all key off this flag so
+      # the image job still runs as a build-only sanity check on PRs.
       - uses: docker/login-action@v3
-        if: github.event_name != 'pull_request'
+        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -196,27 +202,27 @@ jobs:
         id: build
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          sbom: ${{ github.event_name != 'pull_request' }}
-          provenance: ${{ github.event_name != 'pull_request' }}
+          sbom: ${{ needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release' }}
+          provenance: ${{ needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       # ── Sign with Cosign (keyless / Sigstore) ──────────────
       - uses: sigstore/cosign-installer@v3
-        if: github.event_name != 'pull_request'
+        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
 
       - name: Sign image
-        if: github.event_name != 'pull_request'
+        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
         run: |
           cosign sign --yes \
             ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs@${{ steps.build.outputs.digest }}
 
       # ── Trivy vulnerability scan → GitHub Security tab ─────
       - name: Scan image for vulnerabilities
-        if: github.event_name != 'pull_request'
+        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs@${{ steps.build.outputs.digest }}
@@ -225,7 +231,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Upload scan results to GitHub Security
-        if: github.event_name != 'pull_request'
+        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: trivy.sarif
