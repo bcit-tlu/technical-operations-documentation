@@ -11,11 +11,7 @@
       "release-type": "simple",
       "component": "tech-ops-docs",
       "extra-files": [
-        {
-          "type": "yaml",
-          "path": "charts/tech-ops-docs/Chart.yaml",
-          "jsonpath": "$.appVersion"
-        }
+        "charts/tech-ops-docs/Chart.yaml"
       ]
     }
   }
