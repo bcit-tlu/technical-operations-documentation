@@ -10,6 +10,8 @@
     ".": {
       "release-type": "simple",
       "component": "tech-ops-docs",
+      "release-as": "0.3.0",
+      "prerelease": false,
       "extra-files": [
         "charts/tech-ops-docs/Chart.yaml"
       ]
