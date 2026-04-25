@@ -1,49 +1,46 @@
-name: CI – build & publish
+name: "[CI] Lint, build & publish"
 
+# Readable run titles in the Actions UI: PR runs show the PR number and
+# title; main pushes show the head commit subject.
 run-name: >-
   ${{ github.event_name == 'pull_request'
       && format('PR #{0} — {1}', github.event.pull_request.number, github.event.pull_request.title)
-      || startsWith(github.ref, 'refs/tags/')
-      && format('Release {0}', github.ref_name)
       || format('Head build — {0}', github.event.head_commit.message) }}
 
 on:
   push:
     branches: [main]
-    tags: ["v*"]
   pull_request:
     branches: [main]
-  # release-please.yaml re-dispatches this workflow on freshly-created
-  # tag refs, because `push: tags:` is not fired for tags pushed by
-  # GITHUB_TOKEN. When dispatched against a tag ref, the `versions` job
-  # falls into the tag-ref branch and behaves identically to a push
-  # event on that tag.
-  workflow_dispatch:
 
 env:
-  REGISTRY: ghcr.io
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
+# Least-privilege default: only read access at the workflow level.
+# Jobs that need more elevate locally.
 permissions:
   contents: read
-  packages: write
-  id-token: write          # Cosign keyless (Sigstore OIDC)
-  security-events: write   # Trivy SARIF upload to GitHub Security tab
 
 jobs:
-  # ── Helm lint ────────────────────────────────────────────────
+  # ── Quality gates ─────────────────────────────────────────
+  #
+  # Helm lint runs on every push + PR as a parallel quality gate.
+  # Its failure breaks the workflow status but does not block the
+  # image build (surfaced via branch protection required check).
+
   helm-lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@v5
 
       - name: Install kubeconform
         run: |
           curl -sSL https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz \
             | sudo tar xz -C /usr/local/bin kubeconform
 
-      - name: Lint, template-render & validate chart
+      - name: Lint, template-render & validate all charts
         run: |
           for chart in charts/*/; do
             name=$(basename "$chart")
@@ -57,286 +54,27 @@ jobs:
             echo "::endgroup::"
           done
 
-  # ── Compute publish plan (Vault/Rancher-style) ───────────────
+  # ── Container image ──────────────────────────────────────
   #
-  # Tag model (strict-D — matches hashicorp/vault & rancher/rancher):
-  #   v<X.Y.Z>-rcN  → "pre-release" git tag (release-please in prerelease
-  #                   mode). Published as the immutable OCI tag X.Y.Z-rcN
-  #                   only; NO moving pointer follows rcs. Consumers opt
-  #                   into an rc by pinning its version tag.
-  #   v<X.Y.Z>      → "full release" git tag (graduated from an rc via
-  #                   `Release-As:` footer). Published as the immutable
-  #                   X.Y.Z plus, iff this is the highest full-release
-  #                   SemVer, the moving `stable` and `latest` OCI
-  #                   pointers.
+  # The shared reusable workflow handles checkout, change
+  # detection, Docker build/push, Cosign signing, and Trivy
+  # scanning.
   #
-  # Non-tag pushes to main publish only the moving `head` OCI pointer — the
-  # continuous-integration artifact (mirrors rancher/rancher:head). No
-  # SemVer is stamped; no helm chart is published; nothing is "released".
-  versions:
-    runs-on: ubuntu-latest
-    outputs:
-      mode: ${{ steps.compute.outputs.mode }}
-      version: ${{ steps.compute.outputs.version }}
-      is_prerelease: ${{ steps.compute.outputs.is_prerelease }}
-      is_highest_stable: ${{ steps.compute.outputs.is_highest_stable }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0    # need full history + tags for highest-stable check
+  # `helm-lint` is intentionally NOT in `needs` — it runs as an
+  # independent parallel job whose failure surfaces via branch
+  # protection (required status check) rather than delaying or
+  # blocking image builds.
 
-      - name: Compute publish plan
-        id: compute
-        shell: bash
-        run: |
-          set -euo pipefail
-          SHORT_SHA="${GITHUB_SHA::7}"
-          TAG_REF="${GITHUB_REF#refs/tags/}"
-          MODE="skip"
-          VERSION=""
-          IS_PRERELEASE=false
-          IS_HIGHEST_STABLE=false
-
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            MODE="release"
-            VERSION="${TAG_REF#v}"
-            if [[ "${VERSION}" == *-* ]]; then
-              IS_PRERELEASE=true
-            else
-              ALL_STABLE=$(git tag -l "v[0-9]*.[0-9]*.[0-9]*" \
-                | grep -v -- '-' \
-                | sed "s/^v//" \
-                || true)
-              HIGHEST_STABLE=$(printf '%s\n' "${ALL_STABLE}" | sort -V | tail -n1)
-              if [[ "${VERSION}" == "${HIGHEST_STABLE}" ]]; then
-                IS_HIGHEST_STABLE=true
-              fi
-            fi
-          elif [[ "${GITHUB_EVENT_NAME}" == "push" ]]; then
-            # Anchor the head build's version to the next planned
-            # release so operators can read image / chart tags and
-            # immediately see which target SemVer the code is heading
-            # toward. The base is read from .release-please-manifest.json
-            # (release-please's single source of truth for the next
-            # version) and stripped of any prerelease suffix. This
-            # yields tags that SemVer-sort:  head  <  rc  <  full.
-            #
-            # Rule:
-            #   * manifest holds a prerelease (e.g. `0.3.0-rc`)  →
-            #     strip the `-rc` suffix and target the upcoming minor
-            #     (`0.3.0-head.SHA`  <  `0.3.0-rc`).
-            #   * manifest holds a clean stable (e.g. `0.2.0`)   →
-            #     bump patch so head sorts strictly ABOVE the last
-            #     stable release (`0.2.1-head.SHA`  >  `0.2.0`). This
-            #     covers the brief window after graduation but before
-            #     release-please opens the next rc PR, and is agnostic
-            #     to the tag naming scheme (handles both the new
-            #     `vX.Y.Z` format and the legacy `<component>-vX.Y.Z`
-            #     format without needing a git-tag existence check).
-            MODE="head"
-            BASE=$(jq -r '.["."]' .release-please-manifest.json)
-            [[ -n "${BASE}" && "${BASE}" != "null" ]] || {
-              echo "::error::Missing '.' version in .release-please-manifest.json" >&2
-              exit 1
-            }
-            BASE_STABLE="${BASE%-*}"
-            if [[ "${BASE}" == "${BASE_STABLE}" ]]; then
-              IFS=. read -r MAJ MIN PAT <<<"${BASE_STABLE}"
-              BASE_STABLE="${MAJ}.${MIN}.$((PAT + 1))"
-            fi
-            VERSION="${BASE_STABLE}-head.${SHORT_SHA}"
-          else
-            MODE="pr"
-            VERSION="0.0.0-pr.${SHORT_SHA}"
-          fi
-
-          echo "mode=${MODE}"                         >> "$GITHUB_OUTPUT"
-          echo "version=${VERSION}"                   >> "$GITHUB_OUTPUT"
-          echo "is_prerelease=${IS_PRERELEASE}"       >> "$GITHUB_OUTPUT"
-          echo "is_highest_stable=${IS_HIGHEST_STABLE}" >> "$GITHUB_OUTPUT"
-          echo "  mode=${MODE} version=${VERSION} prerelease=${IS_PRERELEASE} highest_stable=${IS_HIGHEST_STABLE}"
-
-  # ── Container image ──────────────────────────────────────────
-  image:
-    runs-on: ubuntu-latest
-    needs: [versions]
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: docker/setup-buildx-action@v3
-
-      # Publish gate: only `head` (main push) and `release` (tag push /
-      # release-please tag re-dispatch) modes may push/sign/scan. PR
-      # builds (mode=pr) and any manual workflow_dispatch on a non-tag
-      # ref (also mode=pr) must stay local — no synthetic `0.0.0-pr.*`
-      # artifacts in the registry. Steps below all key off this flag so
-      # the image job still runs as a build-only sanity check on PRs.
-      - uses: docker/login-action@v3
-        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Publish tags by mode (matches hashicorp/vault, rancher/rancher):
-      #   mode=release (tag push):
-      #     always → <version>
-      #     if full release + highest stable semver → stable, latest
-      #   mode=head  (main branch push):
-      #     always → head
-      #   mode=pr    (pull request):
-      #     always → pr-<sha>  (not pushed to registry)
-      - uses: docker/metadata-action@v5
-        id: meta
-        with:
-          images: ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs
-          tags: |
-            type=raw,value=${{ needs.versions.outputs.version }},enable=${{ needs.versions.outputs.mode != 'skip' }}
-            type=raw,value=head,enable=${{ needs.versions.outputs.mode == 'head' }}
-            type=raw,value=stable,enable=${{ needs.versions.outputs.mode == 'release' && needs.versions.outputs.is_prerelease == 'false' && needs.versions.outputs.is_highest_stable == 'true' }}
-            type=raw,value=latest,enable=${{ needs.versions.outputs.mode == 'release' && needs.versions.outputs.is_prerelease == 'false' && needs.versions.outputs.is_highest_stable == 'true' }}
-          flavor: |
-            latest=false
-
-      - uses: docker/build-push-action@v6
-        id: build
-        with:
-          context: .
-          push: ${{ needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release' }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          sbom: ${{ needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release' }}
-          provenance: ${{ needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release' }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # ── Sign with Cosign (keyless / Sigstore) ──────────────
-      - uses: sigstore/cosign-installer@v3
-        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
-
-      - name: Sign image
-        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
-        run: |
-          cosign sign --yes \
-            ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs@${{ steps.build.outputs.digest }}
-
-      # ── Trivy vulnerability scan → GitHub Security tab ─────
-      - name: Scan image for vulnerabilities
-        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
-        uses: aquasecurity/trivy-action@v0.35.0
-        with:
-          image-ref: ${{ env.REGISTRY }}/${{ github.repository }}/tech-ops-docs@${{ steps.build.outputs.digest }}
-          format: sarif
-          output: trivy.sarif
-          severity: CRITICAL,HIGH
-
-      - name: Upload scan results to GitHub Security
-        if: needs.versions.outputs.mode == 'head' || needs.versions.outputs.mode == 'release'
-        uses: github/codeql-action/upload-sarif@v3
-        with:
-          sarif_file: trivy.sarif
-          category: trivy-tech-ops-docs
-
-  # ── Helm chart → OCI registry ───────────────────────────────
-  #
-  # Charts are published on:
-  #   * tag push (mode=release) — versioned artifact + conditional
-  #     stable/latest moving tags (when highest full-release SemVer).
-  #   * main push (mode=head)   — 0.0.0-head.<sha> versioned artifact +
-  #     the moving `head` OCI tag. Lets flux-fleet's latest overlay
-  #     track main HEAD continuously.
-  #
-  # PR builds do not publish.
-  helm-publish:
-    runs-on: ubuntu-latest
-    needs: [helm-lint, image, versions]
-    # Publish on real main-branch pushes (mode=head) and real tag pushes
-    # / release-please tag dispatches (mode=release). PR builds and
-    # manual workflow_dispatch on non-tag refs both produce mode=pr
-    # artifacts which must never reach the registry.
-    if: >-
-      github.event_name != 'pull_request'
-      && (github.event_name != 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/'))
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: azure/setup-helm@v4
-
-      - uses: sigstore/cosign-installer@v3
-
-      - uses: imjasonh/setup-crane@v0.5
-
-      - uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Log in to GHCR (Helm OCI)
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | \
-            helm registry login ${{ env.REGISTRY }} \
-              -u ${{ github.actor }} --password-stdin
-
-      - name: Package, push, tag & sign charts
-        shell: bash
-        env:
-          MODE: ${{ needs.versions.outputs.mode }}
-          VERSION: ${{ needs.versions.outputs.version }}
-          IS_PRERELEASE: ${{ needs.versions.outputs.is_prerelease }}
-          IS_HIGHEST_STABLE: ${{ needs.versions.outputs.is_highest_stable }}
-        run: |
-          set -euo pipefail
-
-          # Defense-in-depth: the job-level `if:` already excludes
-          # PR / non-tag workflow_dispatch events, but guard against
-          # future event types or config drift that could let MODE=pr
-          # slip past and accidentally publish synthetic artifacts.
-          case "${MODE}" in
-            head|release) ;;
-            *) echo "::error::helm-publish invoked with unexpected mode: ${MODE}" >&2; exit 1 ;;
-          esac
-
-          OCI_BASE="oci://${{ env.REGISTRY }}/${{ github.repository }}/charts"
-          IMAGE_BASE="${{ env.REGISTRY }}/${{ github.repository }}/charts"
-
-          for dir in charts/*/; do
-            chart=$(basename "$dir")
-            echo "::group::${chart}"
-
-            # ── Unified chart + app version ──────────────────────
-            # Chart version and app version are the same string — the
-            # one computed by the `versions` job — so the chart OCI
-            # tag, the image tag, and Chart.AppVersion all match the
-            # release-please lineage. Both Chart.yaml lines carry the
-            # `x-release-please-version` marker; release-please bumps
-            # them in lockstep on every rc / full release, and head
-            # mode stamps the manifest-derived prerelease form computed
-            # by the `versions` job.
-            sed -i "s/^version:.*/version: ${VERSION} # x-release-please-version/" "${dir}Chart.yaml"
-            sed -i "s/^appVersion:.*/appVersion: \"${VERSION}\" # x-release-please-version/" "${dir}Chart.yaml"
-
-            helm package "$dir" -d /tmp/charts
-            PUSH_OUT=$(helm push "/tmp/charts/${chart}-${VERSION}.tgz" "${OCI_BASE}" 2>&1)
-            echo "${PUSH_OUT}"
-
-            DIGEST=$(printf '%s\n' "${PUSH_OUT}" | awk '/^Digest:/{print $2}')
-            [[ -n "${DIGEST}" ]] || { echo "Failed to capture digest from helm push" >&2; exit 1; }
-
-            # Moving-tag rules (strict-D — matches hashicorp/vault &
-            # rancher/rancher):
-            #   mode=head            → add `head`
-            #   mode=release rc      → no moving tag (immutable only)
-            #   mode=release stable  → add `stable` + `latest` iff highest
-            #                          full-release SemVer
-            if [[ "${MODE}" == "head" ]]; then
-              crane tag "${IMAGE_BASE}/${chart}:${VERSION}" head
-            elif [[ "${MODE}" == "release" && "${IS_PRERELEASE}" != "true" && "${IS_HIGHEST_STABLE}" == "true" ]]; then
-              crane tag "${IMAGE_BASE}/${chart}:${VERSION}" stable
-              crane tag "${IMAGE_BASE}/${chart}:${VERSION}" latest
-            fi
-
-            cosign sign --yes "${IMAGE_BASE}/${chart}@${DIGEST}"
-
-            echo "::endgroup::"
-          done
+  build-tech-ops-docs:
+    uses: bcit-tlu/.github/.github/workflows/oci-build.yaml@main
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      security-events: write
+    with:
+      component: tech-ops-docs
+      image_name: tech-ops-docs
+      context: .
+      tag_prefix: "v"
+    secrets: inherit
