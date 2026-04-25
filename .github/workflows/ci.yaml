@@ -72,6 +72,7 @@ jobs:
       packages: write
       id-token: write
       security-events: write
+      actions: read            # Required by codeql-action/upload-sarif on private repos
     with:
       component: tech-ops-docs
       image_name: tech-ops-docs
