@@ -2,5 +2,5 @@ apiVersion: v2
 name: tech-ops-docs
 description: Technical Operations Documentation — static site served by nginx
 type: application
-version: 0.3.0
-appVersion: 0.2.0
+version: 0.3.0 # x-release-please-version
+appVersion: "0.3.0" # x-release-please-version
