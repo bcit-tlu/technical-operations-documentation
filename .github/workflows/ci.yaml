@@ -79,3 +79,63 @@ jobs:
       context: .
       tag_prefix: "v"
     secrets: inherit
+
+  # ── Helm chart → OCI registry (main push) ───────────────────
+  #
+  # Publishes the chart with the same RC version that the image
+  # received so the chart and app tags stay in lockstep.  Only
+  # runs on main pushes when the component actually changed.
+  # Release-time chart publishing is handled by helm-publish.yaml.
+
+  helm-publish:
+    needs: [helm-lint, build-tech-ops-docs]
+    if: >-
+      github.event_name != 'pull_request'
+      && needs.build-tech-ops-docs.outputs.rc_version != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write          # Cosign keyless (Sigstore OIDC)
+    env:
+      REGISTRY: ghcr.io
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: azure/setup-helm@v5
+
+      - name: Helm login (OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | \
+            helm registry login "${{ env.REGISTRY }}" \
+            -u "${{ github.actor }}" \
+            --password-stdin
+
+      - name: Package and push chart
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.build-tech-ops-docs.outputs.rc_version }}"
+          CHART_DIR="charts/tech-ops-docs"
+          DEST_DIR="/tmp/charts"
+
+          mkdir -p "${DEST_DIR}"
+
+          helm dependency update "${CHART_DIR}" || true
+
+          helm package "${CHART_DIR}" \
+            --version "${VERSION}" \
+            --app-version "${VERSION}" \
+            -d "${DEST_DIR}"
+
+          helm push \
+            "${DEST_DIR}/tech-ops-docs-${VERSION}.tgz" \
+            "oci://${{ env.REGISTRY }}/${{ github.repository }}/charts"
+
+      - uses: sigstore/cosign-installer@v3
+
+      - name: Sign chart
+        run: |
+          cosign sign --yes \
+            "${{ env.REGISTRY }}/${{ github.repository }}/charts/tech-ops-docs:${{ needs.build-tech-ops-docs.outputs.rc_version }}"
