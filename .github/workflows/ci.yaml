@@ -112,6 +112,7 @@ jobs:
             --password-stdin
 
       - name: Package and push chart
+        id: push
         shell: bash
         run: |
           set -euo pipefail
@@ -129,13 +130,19 @@ jobs:
             --app-version "${VERSION}" \
             -d "${DEST_DIR}"
 
-          helm push \
+          PUSH_OUT=$(helm push \
             "${DEST_DIR}/tech-ops-docs-${VERSION}.tgz" \
-            "oci://${{ env.REGISTRY }}/${{ github.repository }}/charts"
+            "oci://${{ env.REGISTRY }}/${{ github.repository }}/charts" 2>&1) || true
+          echo "${PUSH_OUT}"
+          printf '%s\n' "${PUSH_OUT}" | grep -q '^Digest:' || { echo '::error::helm push failed'; exit 1; }
+
+          DIGEST=$(printf '%s\n' "${PUSH_OUT}" | awk '/^Digest:/{print $2}')
+          echo "digest=${DIGEST}" >> "$GITHUB_OUTPUT"
 
       - uses: sigstore/cosign-installer@v3
 
       - name: Sign chart
+        if: steps.push.outputs.digest != ''
         run: |
           cosign sign --yes \
-            "${{ env.REGISTRY }}/${{ github.repository }}/charts/tech-ops-docs:${{ needs.build-tech-ops-docs.outputs.rc_version }}"
+            "${{ env.REGISTRY }}/${{ github.repository }}/charts/tech-ops-docs@${{ steps.push.outputs.digest }}"
