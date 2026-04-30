@@ -1,6 +1,6 @@
 # Learning Technology Operations Documentation
 
-Information about app development and deployment workflows, and the infrastructure and systems used by BCIT's Learning Technologies & Services group.
+Information about app development and workflows, and the infrastructure and systems used by BCIT's Teaching & Learning Unit.
 
 ## Getting Started
 
@@ -14,7 +14,7 @@ docker compose up
 
 ## Getting Help
 
-If you have a suggestion, improvement, or bug to report, create an issue so we can track it. For other inquiries, send us an email at [lts_ops@bcit.ca](mailto:lts_ops@bcit.ca).
+If you have a suggestion, improvement, or bug to report, create an issue so we can track it. For other inquiries, send us an email at [tlu_ops@bcit.ca](mailto:tlu_ops@bcit.ca).
 
 ## License
 
