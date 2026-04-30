@@ -3,9 +3,9 @@
 site_name = "Technical Operations Documentation"
 site_description = "Information about the infrastructure and workflows in BCIT's Teaching & Learning unit."
 site_author = "Kyle Hunter"
-site_url = "https://bcit-lts.github.io/technical-operations-documentation/"
-repo_url = "https://github.com/bcit-lts/technical-operations-documentation"
-repo_name = "bcit-lts/technical-operations-documentation"
+site_url = "https://bcit-tlu.github.io/technical-operations-documentation/"
+repo_url = "https://github.com/bcit-tlu/technical-operations-documentation"
+repo_name = "bcit-tlu/technical-operations-documentation"
 edit_uri = "edit/main/docs/"
 copyright = """
 This work is licensed under <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a><img src="https://mirrors.creativecommons.org/presskit/icons/cc.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/by.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/nc.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;"><img src="https://mirrors.creativecommons.org/presskit/icons/sa.svg" alt="" style="max-width: 1em;max-height:1em;margin-left: .2em;">
@@ -326,7 +326,7 @@ link = "https://github.com/bcit-lts/technical-operations-documentation"
 custom_checkbox = true
 [project.markdown_extensions.pymdownx.details]
 [project.markdown_extensions.pymdownx.emoji]
-emoji_index = "zensical.extensions.emoji.twemoji" 
+emoji_index = "zensical.extensions.emoji.twemoji"
 emoji_generator = "zensical.extensions.emoji.to_svg"
 [project.markdown_extensions.pymdownx.highlight]
 anchor_linenums = true
