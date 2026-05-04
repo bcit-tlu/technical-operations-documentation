@@ -89,7 +89,9 @@ jobs:
 
   helm-publish:
     needs: [helm-lint, build-tech-ops-docs]
-    if: github.event_name != 'pull_request'
+    if: >-
+      github.event_name != 'pull_request'
+      && needs.build-tech-ops-docs.outputs.rc_version != ''
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -124,11 +126,6 @@ jobs:
           VERSION: ${{ needs.build-tech-ops-docs.outputs.rc_version }}
         run: |
           set -euo pipefail
-
-          if [[ -z "${VERSION}" ]]; then
-            echo "No RC version (no changes); skipping."
-            exit 0
-          fi
 
           OCI_BASE="oci://${{ env.REGISTRY }}/${{ github.repository }}/charts"
           IMAGE_BASE="${{ env.REGISTRY }}/${{ github.repository }}/charts"
