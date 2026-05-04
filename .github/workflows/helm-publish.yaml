@@ -70,6 +70,7 @@ jobs:
 
           VERSION="${{ steps.parse.outputs.version }}"
           CHART_DIR="charts/tech-ops-docs"
+          CHART_NAME=$(awk '/^name:/{print $2; exit}' "${CHART_DIR}/Chart.yaml")
           DEST_DIR="/tmp/charts"
 
           mkdir -p "${DEST_DIR}"
@@ -82,7 +83,7 @@ jobs:
             -d "${DEST_DIR}"
 
           PUSH_OUT=$(helm push \
-            "${DEST_DIR}/tech-ops-docs-${VERSION}.tgz" \
+            "${DEST_DIR}/${CHART_NAME}-${VERSION}.tgz" \
             "oci://${{ env.REGISTRY }}/${{ github.repository }}/charts" 2>&1) || true
           echo "${PUSH_OUT}"
           printf '%s\n' "${PUSH_OUT}" | grep -q '^Digest:' || { echo '::error::helm push failed'; exit 1; }
@@ -93,5 +94,6 @@ jobs:
       - name: Sign chart
         if: steps.parse.outputs.publish == 'true' && steps.push.outputs.digest != ''
         run: |
+          CHART_NAME=$(awk '/^name:/{print $2; exit}' "charts/tech-ops-docs/Chart.yaml")
           cosign sign --yes \
-            "${{ env.REGISTRY }}/${{ github.repository }}/charts/tech-ops-docs@${{ steps.push.outputs.digest }}"
+            "${{ env.REGISTRY }}/${{ github.repository }}/charts/${CHART_NAME}@${{ steps.push.outputs.digest }}"
