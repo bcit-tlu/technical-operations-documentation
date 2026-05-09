@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.4.0](https://github.com/bcit-tlu/technical-operations-documentation/compare/v0.3.0...v0.4.0) (2026-05-09)
+
+
+### Features
+
+* hotfix ([617e9ed](https://github.com/bcit-tlu/technical-operations-documentation/commit/617e9edef098f3b3e2674eba604a121951e59c80))
+
+
+### Bug Fixes
+
+* remove component field to fix release-please finalization ([#20](https://github.com/bcit-tlu/technical-operations-documentation/issues/20)) ([390cd3a](https://github.com/bcit-tlu/technical-operations-documentation/commit/390cd3ad23680961a96db0294b16b34b55ff3e29))
+* Update README.md ([2a671a4](https://github.com/bcit-tlu/technical-operations-documentation/commit/2a671a4506c3111d448e2eb30aac73918d2e5de1))
+
 ## [0.3.0](https://github.com/bcit-tlu/technical-operations-documentation/compare/v0.2.0...v0.3.0) (2026-04-21)
 
 
