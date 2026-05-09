@@ -6,7 +6,6 @@
   "packages": {
     ".": {
       "release-type": "simple",
-      "component": "tech-ops-docs",
       "extra-files": [
         {
           "type": "generic",
