@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.1](https://github.com/bcit-tlu/technical-operations-documentation/compare/v0.4.0...v0.4.1) (2026-05-15)
+
+
+### Bug Fixes
+
+* push update ([8f10413](https://github.com/bcit-tlu/technical-operations-documentation/commit/8f1041366b8e8ee161f1b2015e85646eab488416))
+* use correct release-please output key for root package dispatch ([#21](https://github.com/bcit-tlu/technical-operations-documentation/issues/21)) ([19665a0](https://github.com/bcit-tlu/technical-operations-documentation/commit/19665a0f58d9eeaac7a3719d90f3226a207a4224))
+
 ## [0.4.0](https://github.com/bcit-tlu/technical-operations-documentation/compare/v0.3.0...v0.4.0) (2026-05-09)
 
 
