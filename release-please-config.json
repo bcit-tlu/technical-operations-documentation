@@ -8,8 +8,9 @@
       "release-type": "simple",
       "extra-files": [
         {
-          "type": "generic",
-          "path": "charts/tech-ops-docs/Chart.yaml"
+          "type": "yaml",
+          "path": "charts/tech-ops-docs/Chart.yaml",
+          "jsonpath": "$.appVersion"
         }
       ]
     }
