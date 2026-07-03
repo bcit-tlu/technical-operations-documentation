@@ -7,14 +7,15 @@ tags:
 
 !!! tip "Strategy"
 
-    Rather than building one large monolithic application, we develop **small, single-purpose apps** and connect them together in a microservice architecture. This keeps services maintainable, testable, and easy to deploy independently.
+    Instead of large monoliths, develop **small, single-purpose apps** and connect them together in a microservice architecture. This keeps services maintainable, testable, and easy to deploy independently.
 
 Local development typically involves:
 
+- cloning or checking out and fetching a source code branch from GitHub
 - writing and updating code
-- building a development image
+- confirming the dev environment build succeeds
 - running tests and local checks
-- committing changes to a feature branch
+- committing changes to the branch
 
 ## Development loop
 

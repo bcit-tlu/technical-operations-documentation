@@ -31,7 +31,7 @@ nav = [
       "developing/index.md",
       "developing/local-dev.md",
       "developing/git-workflow.md",
-      "developing/codespace-development.md"
+      # "developing/codespace-development.md"
     ] }
   ] },
   { "Deploying" = [
@@ -347,3 +347,5 @@ new = "Recently added"
 permalink =  true
 title = "On this page"
 toc_depth = 2
+[project.markdown_extensions.zensical.extensions.glightbox]
+# auto = false

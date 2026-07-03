@@ -6,11 +6,11 @@ tags:
   - version
 ---
 <!-- markdownlint-disable code-block-style -->
-# How to deploy an app
+# Deploying an app
 
-Deploying is automatic when a commit is made to a project's `main` branch and the CI/CD pipeline is triggered.
+Apps are deployed to one of two environments: `latest` (staging), and `stable` (production). Deployments to `latest` are automatic when a PR is merged (merge commit) into `main`. Deployments to `stable` are made by manually merging the **chore:...** PR created by `release-please`. `release-please` is a lightweight version tracker that uses git tags and PR titles to determine a semantic version for releases.
 
-The pipeline builds and versions the app image, signs and pushes the image to GitHub's package registry, and then updates a Helm chart repository with the new version. If `cdn_enabled=true`, the pipeline also rewrites static asset URLs in the image to use a CDN, and uploads those assets to a CDN.
+The pipeline checks that the PR title is formatted correctly, builds and versions the app image, signs and pushes the image to GitHub's package registry, and then updates a Helm chart repository with the new version. If `cdn_enabled=true`, the pipeline also rewrites static asset URLs in the image to use a CDN, and uploads those assets to a CDN.
 
 ## 1. Checkout & Versioning
 

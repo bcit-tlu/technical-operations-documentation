@@ -1,6 +1,6 @@
 services:
   zensical:
-    image: joshooaj/zensical:latest
+    image: zensical/zensical:latest
     ports:
       - "8080:8000"
     volumes:
