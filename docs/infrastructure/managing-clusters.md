@@ -37,17 +37,19 @@ To test a token exactly as Headlamp uses it — as a Bearer token against the AP
 
 ```bash
 TOKEN=$(kubectl --context admin@tlu-c01 -n kube-system create token headlamp-admin --duration=1h)
+# `tlu-c01` below is the kubeconfig cluster name, not the context name
 kubectl config view --raw \
   -o jsonpath='{.clusters[?(@.name=="tlu-c01")].cluster.certificate-authority-data}' \
   | base64 -d > /tmp/tlu-c01-ca.crt
-kubectl --server=https://k8s-api.tlu-c01.tlu.bcit.ca:6443 \
+kubectl --kubeconfig=/dev/null \
+  --server=https://k8s-api.tlu-c01.tlu.bcit.ca:6443 \
   --certificate-authority=/tmp/tlu-c01-ca.crt --token="$TOKEN" auth whoami
 # expect Username: system:serviceaccount:kube-system:headlamp-admin
 ```
 
-!!! warning "Don't test tokens via `--context`"
+!!! warning "Isolate the kubeconfig when testing tokens"
 
-    `kubectl --context admin@tlu-c01 --token="$TOKEN" ...` still sends the context's embedded client certificate, which wins over `--token` — `auth whoami` reports `admin`, not the service account. Use `--server`/`--certificate-authority`/`--token` without a context, as above.
+    kubectl merges your ambient kubeconfig even when `--context` is omitted — an admin context's embedded client certificate authenticates instead of `--token`, and `auth whoami` reports `admin`, not the service account. `--kubeconfig=/dev/null` guarantees only the token is tested. Note the token appears briefly in process arguments while this runs — it is TTL'd, but on shared hosts prefer testing in a scratch kubeconfig file instead.
 
 !!! info "Cluster-admin scope"
 
@@ -57,4 +59,4 @@ kubectl --server=https://k8s-api.tlu-c01.tlu.bcit.ca:6443 \
 
 Headlamp's CPU/Memory columns — and `kubectl top` — read from the `metrics.k8s.io` API, which is served by [metrics-server](https://github.com/kubernetes-sigs/metrics-server). Neither Kubernetes nor Talos ships metrics-server by default; if the columns are blank and `kubectl top nodes` reports "Metrics API not available", it isn't installed yet.
 
-Talos-specific caveat: kubelet serving certificates are signed by a **per-node Talos CA**, not the Kubernetes cluster CA, so metrics-server cannot verify them with the standard CA bundle. Deploy it with `--kubelet-insecure-tls` (per SideroLabs guidance). Node metrics should be delivered through `flux-fleet-v2`'s observability tier rather than installed by hand.
+Talos-specific caveat: kubelet serving certificates are signed by a **per-node Talos CA**, not the Kubernetes cluster CA, so metrics-server cannot verify them with the standard CA bundle. The documented Talos workaround is `--kubelet-insecure-tls` — it disables kubelet identity verification, so it is a deliberate trade-off for read-only stats scraping rather than a neutral default. Node metrics should be delivered through `flux-fleet-v2`'s observability tier rather than installed by hand.
