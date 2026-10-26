@@ -63,6 +63,9 @@ jobs:
       image_name: tech-ops-docs
       context: .
       tag_prefix: "v"
+      # PR builds publish sha-<head>/pr-<n> images for the flux-fleet-v2
+      # preview environment (label a PR `preview`).
+      push_pr_images: true
     secrets: inherit
 
   # Publish chart from main pushes using the image RC version.
