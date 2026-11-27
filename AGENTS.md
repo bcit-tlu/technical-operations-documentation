@@ -1,5 +1,7 @@
 # AGENTS.md
 
+Tooling: every CLI this repo needs comes from `shell.nix`; run commands via `nix-shell --run` (or `direnv allow`) before concluding a tool is missing.
+
 ## Setup Commands
 
 - Local development: `docker compose up` (starts Zensical dev server on port 8000)
@@ -30,6 +32,7 @@
 
 ## Development Workflow
 
+- Default PR loop (no need to be asked): after every push, wait until all checks — including Devin Review and github-code-quality — have finished, fix and resolve every thread (≤3 rounds), and only then report or admin-merge. An instruction to "admin-merge" never skips this wait.
 - Create feature branches from `main`
 - Do issue/PR work in a git worktree, not the main checkout: `git fetch origin && git worktree add .worktrees/<name> -b <type>/<issue>-<slug> origin/main` (`.worktrees/` is gitignored)
 - Keep the main checkout on a clean, up-to-date `main`; after the PR merges, `git worktree remove .worktrees/<name>` (`git worktree prune` clears stale registrations)
